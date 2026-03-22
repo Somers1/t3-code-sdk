@@ -1,0 +1,11 @@
+LICENSE
+README.md
+pyproject.toml
+t3_code.py
+t3_code_sdk/__init__.py
+t3_code_sdk/py.typed
+t3_code_sdk.egg-info/PKG-INFO
+t3_code_sdk.egg-info/SOURCES.txt
+t3_code_sdk.egg-info/dependency_links.txt
+t3_code_sdk.egg-info/top_level.txt
+tests/test_t3_sdk.py

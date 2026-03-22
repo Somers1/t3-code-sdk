@@ -1,0 +1,623 @@
+# T3 Code Python SDK
+
+`t3-code-sdk` is a lightweight Python SDK for reading and mutating T3 Code state through the local SQLite database, with optional live command dispatch to a running T3 server over WebSocket.
+
+It covers:
+
+- Projects
+- Threads
+- Messages
+- Activities
+- Sessions
+- Proposed plans
+- Pending approvals
+- Turns and checkpoints
+- Simple project file search/write helpers
+
+## Repository Layout
+
+- `t3_code.py`: main SDK implementation
+- `t3_code_sdk/`: installable package re-exports for `T3Code` and the data models
+- `tests/test_t3_sdk.py`: regression tests
+- `t3code/`: upstream/reference application code snapshot used while building this SDK
+
+## Requirements
+
+- Python 3.10+
+- No third-party Python dependencies
+- A writable SQLite path if you want local state initialization
+- A running T3 server only if you want live execution with `thread.run(...)` or `live=True`
+
+## Importing
+
+Install from PyPI:
+
+```bash
+pip install t3-code-sdk
+```
+
+Then import it with:
+
+```python
+from t3_code_sdk import T3Code
+```
+
+If you are working directly inside this repo before installing the package, `from t3_code import T3Code` also works. `T3` remains available as a compatibility alias.
+
+## Quick Start
+
+```python
+from pathlib import Path
+from t3_code_sdk import T3Code
+
+sdk = T3Code(Path.home() / ".t3" / "userdata" / "state.sqlite")
+
+project = sdk.projects.get_or_create(
+    workspace_root="/Users/you/code/my-app",
+    title="My App",
+    create_initial_thread=False,
+)
+
+thread = project.create_thread(
+    title="Implement login cleanup",
+    model="gpt-5.4",
+)
+
+thread.send_message("Clean up the login flow and add tests.")
+
+for message in thread.get_messages():
+    print(message.role, message.text)
+```
+
+If `db_path` is omitted, the SDK defaults to `~/.t3/userdata/state.sqlite`.
+
+## Local State vs Live Server
+
+There are two modes:
+
+### Local database mode
+
+The SDK writes directly to the SQLite database and updates the projection tables itself.
+
+Use this for:
+
+- Creating projects and threads locally
+- Recording messages, sessions, plans, approvals, turns, and checkpoints
+- Reading orchestration state
+- File search and write helpers
+
+### Live server mode
+
+If you pass `server_url`, the SDK can dispatch commands to a live T3 server:
+
+```python
+sdk = T3Code(
+    server_url="ws://127.0.0.1:3773",
+)
+```
+
+If the server requires a token:
+
+```python
+sdk = T3Code(
+    server_url="ws://127.0.0.1:3773",
+    server_token="your-token",
+)
+```
+
+Notes:
+
+- `server_url` must use `ws://` or `wss://`
+- `thread.run(...)` always requires a configured live server
+- `live=True` on project/thread creation dispatches creation through the server
+- If `server_url` is configured, project/thread creation defaults to live dispatch unless you pass `live=False` or `prefer_server=False`
+- Live dispatch waits for the new row/message to appear in SQLite, then returns the resulting model when available
+
+## Main Objects
+
+The preferred style is to work on model objects directly:
+
+```python
+project = sdk.find_project("My App")
+thread = project.create_thread(title="Bugfix")
+thread.run("Fix the auth flow", provider="codex", model="gpt-5.4")
+```
+
+Primary models:
+
+- `Project`
+- `Thread`
+- `Message`
+- `ThreadActivity`
+- `Session`
+- `ProposedPlan`
+- `PendingApproval`
+- `Turn`
+- `CheckpointSummary`
+
+Nested managers still exist for lower-level access:
+
+- `sdk.projects`
+- `sdk.threads`
+- `sdk.projects.open(project_id).threads`
+- `sdk.projects.open(project_id).files`
+- `sdk.threads.open(thread_id).messages`
+- `sdk.threads.open(thread_id).activities`
+- `sdk.threads.open(thread_id).session`
+- `sdk.threads.open(thread_id).proposed_plans`
+- `sdk.threads.open(thread_id).approvals`
+- `sdk.threads.open(thread_id).turns`
+- `sdk.threads.open(thread_id).checkpoints`
+
+## Creating Projects
+
+```python
+project = sdk.projects.create(
+    workspace_root="/Users/you/code/my-app",
+    title="My App",
+    default_model="gpt-5.4",
+    scripts=[
+        {
+            "id": "test",
+            "name": "Run Tests",
+            "command": "pytest",
+            "icon": "test",
+            "runOnWorktreeCreate": False,
+        }
+    ],
+    create_initial_thread=True,
+    initial_thread_title="New thread",
+    initial_thread_model="gpt-5.4-mini",
+)
+```
+
+Useful options:
+
+- `ensure_workspace_exists=True` validates that `workspace_root` already exists
+- `live=True` creates the project through the T3 server instead of local-only database writes
+- `create_initial_thread=False` skips automatic thread creation
+
+Lookup helpers:
+
+```python
+project = sdk.projects.get("project-id")
+project = sdk.projects.get_by_title("My App")
+project = sdk.projects.get_by_workspace_root("/Users/you/code/my-app")
+project = sdk.projects.get_or_create(workspace_root="/Users/you/code/my-app")
+```
+
+Object-level helpers:
+
+```python
+project.refresh()
+project.update(title="Renamed App", default_model="gpt-5.4-mini")
+project.delete()
+```
+
+## Creating and Finding Threads
+
+```python
+thread = project.create_thread(
+    title="Bugfix Thread",
+    model="gpt-5.4-mini",
+    runtime_mode="full-access",
+    interaction_mode="default",
+    branch="feature/auth-cleanup",
+    worktree_path="/tmp/my-app-worktree",
+)
+```
+
+Thread lookup:
+
+```python
+threads = project.get_threads()
+thread = project.get_thread("thread-id")
+thread = project.find_thread("Bugfix Thread")
+thread = project.get_or_create_thread(title="Bugfix Thread")
+```
+
+Top-level lookup also exists:
+
+```python
+thread = sdk.get_thread("thread-id")
+thread = sdk.find_thread("Bugfix Thread", project_id=project.id)
+```
+
+Thread lifecycle helpers:
+
+```python
+thread.refresh()
+thread.update(title="Updated Thread", branch="feature/new-branch")
+thread.set_runtime_mode("approval-required")
+thread.set_interaction_mode("plan")
+thread.delete()
+```
+
+Allowed enum values:
+
+- `runtime_mode`: `full-access`, `approval-required`
+- `interaction_mode`: `default`, `plan`
+
+## Messages
+
+### Send a message without live execution
+
+This writes local orchestration state and creates a pending turn request in SQLite.
+
+```python
+message = thread.send_message(
+    "Draft the task locally",
+    provider="codex",
+    model="gpt-5.4",
+)
+```
+
+Equivalent low-level form:
+
+```python
+message = sdk.threads.open(thread.id).messages.send("Draft the task locally")
+```
+
+### Run a live turn
+
+This dispatches `thread.turn.start` to the configured server.
+
+```python
+message = thread.run(
+    "Refactor the authentication flow and add tests.",
+    provider="codex",
+    model="gpt-5.4",
+    timeout=5.0,
+)
+```
+
+Or:
+
+```python
+thread.send_message(
+    "Refactor the authentication flow and add tests.",
+    provider="codex",
+    model="gpt-5.4",
+    run=True,
+)
+```
+
+Allowed provider values:
+
+- `codex`
+- `claudeAgent`
+
+### Record assistant output manually
+
+If your integration layer receives assistant output separately, you can store it directly:
+
+```python
+thread.set_session(
+    status="running",
+    provider_name="codex",
+    active_turn_id="turn-123",
+)
+
+assistant_message = thread.record_assistant_message(
+    turn_id="turn-123",
+    text="Refactored the auth flow and added tests.",
+    streaming=False,
+)
+```
+
+Read messages:
+
+```python
+messages = thread.get_messages()
+recent_messages = sdk.threads.open(thread.id).messages.list(limit=10)
+```
+
+## Attachments
+
+Local message recording supports image attachment metadata:
+
+```python
+thread.send_message(
+    "Review this screenshot",
+    attachments=[
+        {
+            "type": "image",
+            "id": "img-1",
+            "name": "screen.png",
+            "mimeType": "image/png",
+            "sizeBytes": 12345,
+        }
+    ],
+)
+```
+
+Live runs expect `dataUrl` instead of `id`:
+
+```python
+thread.run(
+    "Review this screenshot",
+    attachments=[
+        {
+            "type": "image",
+            "name": "screen.png",
+            "mimeType": "image/png",
+            "sizeBytes": 12345,
+            "dataUrl": "data:image/png;base64,...",
+        }
+    ],
+)
+```
+
+Attachment limits:
+
+- Maximum 8 attachments per message
+- Image attachments only
+- Maximum 10 MB per attachment
+
+## Activities
+
+```python
+activity = thread.append_activity(
+    kind="approval.requested",
+    summary="Need approval to run migrations",
+    tone="approval",
+    turn_id="turn-123",
+    payload={"requestId": "approval-1", "command": "alembic upgrade head"},
+)
+
+activities = thread.get_activities()
+```
+
+Allowed tones:
+
+- `info`
+- `tool`
+- `approval`
+- `error`
+
+## Sessions
+
+```python
+session = thread.set_session(
+    status="running",
+    provider_name="codex",
+    active_turn_id="turn-123",
+)
+
+current = thread.get_session()
+thread.stop_session()
+```
+
+Allowed session statuses:
+
+- `idle`
+- `starting`
+- `running`
+- `ready`
+- `interrupted`
+- `stopped`
+- `error`
+
+Top-level helper:
+
+```python
+active = sdk.list_active_sessions()
+```
+
+## Proposed Plans
+
+```python
+plan = thread.upsert_proposed_plan(
+    "1. Update API\n2. Update UI\n3. Add tests",
+    turn_id="turn-123",
+)
+
+plans = thread.get_proposed_plans()
+```
+
+If a plan was implemented by another thread:
+
+```python
+thread.upsert_proposed_plan(
+    "1. Update API\n2. Update UI",
+    plan_id="plan-1",
+    turn_id="turn-123",
+    implemented_at="2026-03-22T00:00:00.000Z",
+    implementation_thread_id="thread-implementation",
+)
+```
+
+To attribute a new run to a proposed plan:
+
+```python
+thread.run(
+    "Implement the approved plan",
+    source_proposed_plan_thread_id="thread-source",
+    source_proposed_plan_id="plan-1",
+)
+```
+
+## Approvals and User Input
+
+```python
+pending = thread.get_pending_approvals(active_only=True)
+
+for item in pending:
+    thread.respond_to_approval(item.request_id, "accept")
+```
+
+Equivalent manager form:
+
+```python
+sdk.threads.open(thread.id).approvals.respond("approval-1", "accept")
+```
+
+Allowed approval decisions:
+
+- `accept`
+- `acceptForSession`
+- `decline`
+- `cancel`
+
+For structured user-input requests:
+
+```python
+thread.respond_to_user_input(
+    "request-123",
+    {"environment": "staging", "run_migrations": True},
+)
+```
+
+## Turns and Checkpoints
+
+List all turns:
+
+```python
+turns = thread.get_turns()
+```
+
+Interrupt the current or named turn:
+
+```python
+thread.interrupt_turn()
+thread.interrupt_turn("turn-123")
+```
+
+Record completed diff/checkpoint information:
+
+```python
+turn = thread.complete_diff(
+    turn_id="turn-123",
+    checkpoint_turn_count=1,
+    checkpoint_ref="checkpoint-1",
+    status="ready",
+    assistant_message_id="message-456",
+    files=[
+        {"path": "src/api.py", "kind": "file", "additions": 10, "deletions": 2},
+    ],
+)
+```
+
+Read checkpoint summaries:
+
+```python
+checkpoints = thread.get_checkpoints()
+```
+
+Revert a thread to a previous checkpoint turn count:
+
+```python
+thread.revert_to_checkpoint(1)
+```
+
+Allowed checkpoint statuses:
+
+- `ready`
+- `missing`
+- `error`
+
+## Project File Helpers
+
+Search the workspace root:
+
+```python
+results = project.search_entries("auth", limit=20)
+
+for entry in results.entries:
+    print(entry.path, entry.kind, entry.parent_path)
+
+print(results.truncated)
+```
+
+Write a file relative to the workspace:
+
+```python
+result = project.write_file(
+    "src/auth/service.py",
+    "print('updated')\n",
+)
+
+print(result.relative_path)
+```
+
+Behavior:
+
+- Paths must stay inside the project workspace
+- Absolute paths are rejected
+- `../` traversal outside the workspace is rejected
+- Search limit must be between 1 and 200
+
+## Convenience Helpers on `T3Code`
+
+Compatibility shortcuts still exist:
+
+```python
+sdk.list_projects()
+sdk.get_project("project-id")
+sdk.find_project("My App")
+sdk.create_project("/Users/you/code/my-app")
+sdk.delete_project("project-id")
+
+sdk.create_thread(project.id, title="New thread")
+sdk.list_threads(project.id)
+sdk.list_messages(thread.id, limit=50)
+sdk.list_activities(thread.id, limit=50)
+sdk.get_session(thread.id)
+sdk.list_active_sessions()
+```
+
+## Validation Rules and Limits
+
+The SDK validates most write inputs before touching the database or the server.
+
+Important limits:
+
+- Search query length: 256 characters
+- Relative path length: 512 characters
+- Message text length: 120000 characters
+- Attachment count: 8
+- Attachment size: 10 MB each
+
+Important validations:
+
+- Empty message text is rejected
+- Unknown runtime/interaction modes are rejected
+- Unknown providers are rejected
+- Approval decisions must use a supported enum
+- `source_proposed_plan_thread_id` and `source_proposed_plan_id` must be provided together
+
+## Running Tests
+
+Use explicit discovery from the repo root:
+
+```bash
+python3 -m unittest discover -s tests -p 'test*.py' -q
+```
+
+Current tested coverage includes:
+
+- Project CRUD and lookup helpers
+- Thread CRUD and ergonomic object API
+- Message persistence
+- Session state updates
+- Activities, approvals, proposed plans, and checkpoints
+- File search/write helpers
+- Input validation failures
+- Live WebSocket dispatch for `thread.run(...)`
+
+## Example
+
+```python
+from t3_code_sdk import T3Code
+
+sdk = T3Code(server_url="ws://127.0.0.1:3773")
+
+project = sdk.find_project("t3sdk")
+thread = project.create_thread(title="Review")
+
+thread.run(
+    "Please review this project and ensure the readme covers all things",
+    provider="codex",
+    model="gpt-5.4",
+)
+```
