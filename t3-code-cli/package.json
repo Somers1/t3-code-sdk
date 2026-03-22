@@ -1,0 +1,40 @@
+{
+  "name": "t3-code-cli",
+  "version": "0.1.0",
+  "description": "TypeScript SDK and CLI for reading and mutating T3 Code state.",
+  "type": "module",
+  "bin": {
+    "t3-code-cli": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsdown src/index.ts src/cli.ts --format esm --dts --clean --out-dir dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "t3",
+    "t3code",
+    "cli",
+    "sdk",
+    "sqlite",
+    "websocket"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": "^24.10 || >=25"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.13",
+    "@types/ws": "^8.5.13",
+    "tsdown": "^0.20.3",
+    "typescript": "^5.7.3",
+    "vitest": "^4.0.0",
+    "ws": "^8.18.0"
+  }
+}

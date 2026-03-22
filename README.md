@@ -30,11 +30,19 @@ It covers:
 
 ## Importing
 
-Install from PyPI:
+Install from Git:
 
 ```bash
-pip install t3-code-sdk
+pip install git+ssh://git@github.com/Somers1/t3-code-sdk.git
 ```
+
+If you prefer HTTPS:
+
+```bash
+pip install git+https://github.com/Somers1/t3-code-sdk.git
+```
+
+`pip install git@github.com:Somers1/t3-code-sdk.git` does not work because `pip` expects a VCS URL with a `git+...` scheme.
 
 Then import it with:
 
